@@ -50,6 +50,9 @@ app = Flask(__name__)
 def hello():
     return "Flask is working!"
 
+print("Flask 起動準備完了")
+
 if __name__ == "__main__":
+    print("Flask を起動します")
     app.run(host="0.0.0.0", port=5000)
 
