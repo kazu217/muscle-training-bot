@@ -13,7 +13,7 @@ line_bot_api = LineBotApi(os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
 handler = WebhookHandler(os.getenv("LINE_CHANNEL_SECRET"))
 
 # 大学サーバーの記録用APIエンドポイント（あなたのサーバーIPに書き換える）
-UNIV_SERVER_ENDPOINT = "http://131.113.xxx.xxx:5000/record"
+UNIV_SERVER_ENDPOINT = "http://131.113.97.12:5000/record"
 
 @app.route("/callback", methods=['POST'])
 def callback():
