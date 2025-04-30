@@ -27,5 +27,8 @@ def handle_message(event):
         TextSendMessage(text=f"受け取りました: {text}")
     )
 
+print("Flask 起動準備完了")
+
 if __name__ == "__main__":
-    app.run()
+    print("Flask を起動します")
+    app.run(host="0.0.0.0", port=5000)
