@@ -22,12 +22,12 @@ def callback():
         abort(400)
     return 'OK'
 
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
+@handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
+def handle_media(event):
     user_id = event.source.user_id
-    text = event.message.text
     today = datetime.now().strftime('%Y-%m-%d')
-    print(f"📩 {today} に {user_id} から: {text}")
+
+    print(f"📸 {today} に {user_id} が画像/動画を送信")
 
     # ✅ グループID表示（LINEグループ投稿時のみ取得可能）
     if event.source.type == "group":
