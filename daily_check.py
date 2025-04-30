@@ -1,24 +1,25 @@
 import json, csv, datetime
 
-members = [
-    ("うり", "user_id_1"),
-    ("ともや", "user_id_2"),
-    ("りょうや", "user_id_3"),
-    ("ほうろう", "user_id_4"),
-    ("いなうた", "user_id_5"),
-    ("じおん", "user_id_6"),
-]
+# 🔸 1. ユーザーID → 表示名マッピングを読み込む
+with open("members.json", "r", encoding="utf-8") as f:
+    id_to_name = json.load(f)
 
-with open("log.json") as f:
+# 🔸 2. (表示名, user_id) のリストを作成
+members = [(id_to_name[uid], uid) for uid in id_to_name]
+
+# 🔸 3. log.json から昨日のデータを取得
+with open("log.json", "r", encoding="utf-8") as f:
     logs = json.load(f)
 
-today = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-day_log = logs.get(today, [])
+yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+day_log = logs.get(yesterday, [])
 
-row = []
-for name, uid in members:
-    row.append(0 if uid in day_log else 1)
+# 🔸 4. 出力行を作成（投稿していれば0、していなければ1）
+row = [0 if uid in day_log else 1 for _, uid in members]
 
-with open("daily.csv", "a", newline='') as f:
+# 🔸 5. CSVに追加
+with open("daily.csv", "a", newline='', encoding="utf-8") as f:
     writer = csv.writer(f)
     writer.writerow(row)
+
+print(f"✅ {yesterday} の記録を daily.csv に追加しました")
