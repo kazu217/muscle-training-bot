@@ -1,6 +1,4 @@
-<<<<<<< HEAD
-# RenderのBotから大学サーバーに投稿記録を転送する構成
-# Render側ではログ保存せず、大学サーバーにPOSTで記録だけ渡す
+
 
 import os
 import requests  # ← 大学サーバーにPOSTするため
@@ -98,4 +96,4 @@ def handle_message(event):
         event.reply_token,
         TextSendMessage(text=f"受け取りました: {text}")
     )
->>>>>>> a91caa8ea58e1ae8309f9407988d42be56d0f880
+
