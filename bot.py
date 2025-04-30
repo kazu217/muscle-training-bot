@@ -46,7 +46,6 @@ def handle_message(event):
         event.reply_token,
         TextSendMessage(text=f"受け取りました: {text}")
     )
-=======
 # RenderのBotから大学サーバーに投稿記録を転送する構成
 # Render側ではログ保存せず、大学サーバーにPOSTで記録だけ渡す
 
