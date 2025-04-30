@@ -38,3 +38,6 @@ def handle_message(event):
 
     with open(record_file, 'w') as f:
         json.dump(logs, f)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
