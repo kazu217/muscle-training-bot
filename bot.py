@@ -1,4 +1,4 @@
-from flask import Flask, request, abort
+"""from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage
 import os, json
@@ -40,4 +40,16 @@ def handle_message(event):
         json.dump(logs, f)
 
 if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)"""
+
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+    return "Flask is working!"
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
