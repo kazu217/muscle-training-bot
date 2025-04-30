@@ -2,7 +2,7 @@ import os
 import requests
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage ,ImageMessage, VideoMessage
 from datetime import datetime
 
 app = Flask(__name__)
