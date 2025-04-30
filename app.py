@@ -26,9 +26,3 @@ def handle_message(event):
         event.reply_token,
         TextSendMessage(text=f"受け取りました: {text}")
     )
-
-print("Flask 起動準備完了")
-
-if __name__ == "__main__":
-    print("Flask を起動します")
-    app.run(host="0.0.0.0", port=5000)
