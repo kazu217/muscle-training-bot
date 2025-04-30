@@ -47,7 +47,8 @@ def handle_message(event):
         print("❌ 大学サーバーへの送信失敗", e)
 
     # LINE返信
-    line_bot_api.reply_message(
+    """line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=f"受け取りました: {text}")
-    )
+    )"""
+
