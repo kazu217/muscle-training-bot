@@ -107,8 +107,4 @@ def index():
     return "LINE bot is alive"
 
 
-    # LINE返信
-    """line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=f"受け取りました: {text}")
-    )"""
+   
