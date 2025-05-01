@@ -8,7 +8,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage ,ImageMess
 from datetime import datetime
 
 app = Flask(__name__)
-line_botimport os
+import os
 import requests
 from dotenv import load_dotenv
 load_dotenv()
