@@ -1,23 +1,42 @@
-import json, csv, datetime
+import json, csv
+from datetime import datetime, timedelta
+import pytz
 
-# 🔸 1. ユーザーID → 表示名マッピングを読み込む
+# タイムゾーンを日本時間に設定
+JST = pytz.timezone("Asia/Tokyo")
+
+# 昨日の 00:00 〜 23:59 の時間範囲
+now = datetime.now(JST)
+yesterday = (now - timedelta(days=1)).date()
+start = JST.localize(datetime.combine(yesterday, datetime.min.time()))
+end = JST.localize(datetime.combine(yesterday, datetime.max.time()))
+
+# 🔹 メンバー情報の読み込み
 with open("members.json", "r", encoding="utf-8") as f:
     id_to_name = json.load(f)
 
-# 🔸 2. (表示名, user_id) のリストを作成
-members = [(id_to_name[uid], uid) for uid in id_to_name]
+members = sorted([(id_to_name[uid], uid) for uid in id_to_name])
 
-# 🔸 3. log.json から昨日のデータを取得
+# 🔹 ログの読み込み
 with open("log.json", "r", encoding="utf-8") as f:
     logs = json.load(f)
 
-yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-day_log = logs.get(yesterday, [])
+# 🔹 罰金対象リストを作成
+row = []
+for name, uid in members:
+    timestamps = logs.get(uid, [])
+    posted = False
+    for t in timestamps:
+        try:
+            dt = datetime.fromisoformat(t).astimezone(JST)
+            if start <= dt <= end:
+                posted = True
+                break
+        except Exception as e:
+            print(f"❌ {t} の日時変換に失敗: {e}")
+    row.append(0 if posted else 1)
 
-# 🔸 4. 出力行を作成（投稿していれば0、していなければ1）
-row = [0 if uid in day_log else 1 for _, uid in members]
-
-# 🔸 5. CSVに追加
+# 🔹 CSVに追記
 with open("daily.csv", "a", newline='', encoding="utf-8") as f:
     writer = csv.writer(f)
     writer.writerow(row)
