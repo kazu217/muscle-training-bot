@@ -96,6 +96,10 @@ def handle_text(event):
         reply("チョコミントよりもあ・な・た", event)
         return
 
+    if text.endswith("募"):
+        reply("🉑", event)
+        return
+
     if text.endswith("ちゃん！"):
         reply("はーい", event)
         return
