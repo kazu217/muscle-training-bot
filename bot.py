@@ -50,14 +50,23 @@ def handle_media(event):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
-    """「西山ダディダディ」と送られたときだけ返信する。"""
-    if event.message.text.strip() == "西山ダディダディ":
-        reply = "どすこいわっしょいピーポーピーポ―西山ダディダディ～"
+    text = event.message.text.strip()
+
+    replies = {
+        "西山ダディダディ": "どすこいわっしょいピーポーピーポ―西山ダディダディ～",
+	"藤原ダディダディ": "どすこいわっしょいピーポーピーポ―藤原ダディダディ～",
+	"古山ダディダディ": "どすこいわっしょいピーポーピーポ―古山ダディダディ～",
+        "筋トレbotちゃん！": "はーい",
+	"ルビーちゃん！": "はーい",
+        "何が好き？":       "チョコミントよりもあ・な・た",
+    }
+
+    # キーに一致するメッセージがあれば返信して終了
+    if text in replies:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=reply)
+            TextSendMessage(text=replies[text])
         )
-        # ここで終了（CSV 追記や大学サーバー送信などは一切しない）
         return
 
 @app.route("/", methods=["GET"])
