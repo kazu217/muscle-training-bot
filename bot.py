@@ -99,6 +99,9 @@ def handle_text(event):
     if text.endswith("ちゃん！"):
         reply("はーい", event)
         return
+    if text.endswith("ちんげのきたろう"):
+        reply("受け取りました：ちんげのきたろう", event)
+        return
 
     if text.endswith("ダディダディ"):
         reply(f"どすこいわっしょいピーポーピーポ―{text}～", event)
