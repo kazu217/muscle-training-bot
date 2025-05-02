@@ -80,11 +80,11 @@ def handle_text(event):
     if text.endswith("途中経過"):
 　　    name = text.replace("途中経過", "")
     	if not os.path.exists("members.json") or not os.path.exists("daily.csv"):
-     	   line_bot_api.reply_message(
-               event.reply_token,
-               TextSendMessage(text="データがありません。")
-           )
-           return
+     	    line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="データがありません。")
+            )
+            return
     with open("members.json", "r", encoding="utf-8") as f:
         id_to_name = json.load(f)
     name_to_index = {v: i for i, v in enumerate(id_to_name.values())}
