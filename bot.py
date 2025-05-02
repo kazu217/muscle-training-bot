@@ -79,8 +79,8 @@ def handle_text(event):
 
     if text.endswith("途中経過"):
       name = text.replace("途中経過", "")
-    	if not os.path.exists("members.json") or not os.path.exists("daily.csv"):
-     	    line_bot_api.reply_message(
+        if not os.path.exists("members.json") or not os.path.exists("daily.csv"):
+            line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text="データがありません。")
             )
