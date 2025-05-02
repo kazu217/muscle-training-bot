@@ -77,6 +77,33 @@ def handle_text(event):
         )
         return
 
+    if text.endswith("途中経過"):
+　　    name = text.replace("途中経過", "")
+    	if not os.path.exists("members.json") or not os.path.exists("daily.csv"):
+     	   line_bot_api.reply_message(
+               event.reply_token,
+               TextSendMessage(text="データがありません。")
+           )
+           return
+    with open("members.json", "r", encoding="utf-8") as f:
+        id_to_name = json.load(f)
+    name_to_index = {v: i for i, v in enumerate(id_to_name.values())}
+    if name not in name_to_index:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="その名前は登録されていません。")
+        )
+        return
+    index = name_to_index[name]
+    with open("daily.csv", "r", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    count = sum(1 for row in rows if len(row) > index and row[index] == "1")
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=f"{name}は今月{count}回忘れてます")
+    )
+    return
+
 
 @app.route("/", methods=["GET"])
 def index():
