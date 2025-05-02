@@ -52,22 +52,31 @@ def handle_media(event):
 def handle_text(event):
     text = event.message.text.strip()
 
-    replies = {
-        "西山ダディダディ": "どすこいわっしょいピーポーピーポ―西山ダディダディ～",
-	"藤原ダディダディ": "どすこいわっしょいピーポーピーポ―藤原ダディダディ～",
-	"古山ダディダディ": "どすこいわっしょいピーポーピーポ―古山ダディダディ～",
-        "筋トレbotちゃん！": "はーい",
-	"ルビーちゃん！": "はーい",
-        "何が好き？":       "チョコミントよりもあ・な・た",
-    }
-
-    # キーに一致するメッセージがあれば返信して終了
-    if text in replies:
+    # 固定フレーズ：質問「何が好き？」にだけ返す
+    if text == "何が好き？":
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=replies[text])
+            TextSendMessage(text="チョコミントよりもあ・な・た")
         )
         return
+
+    # 「○○ちゃん！」→「はーい」
+    if text.endswith("ちゃん！"):
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="はーい")
+        )
+        return
+
+    # 「○○ダディダディ」→「どすこいわっしょいピーポーピーポ―○○ダディダディ～」
+    if text.endswith("ダディダディ"):
+        reply = f"どすこいわっしょいピーポーピーポ―{text}～"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply)
+        )
+        return
+
 
 @app.route("/", methods=["GET"])
 def index():
