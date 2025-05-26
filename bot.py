@@ -93,7 +93,7 @@ def handle_media(event):
         print("✅ 大学サーバーに送信成功", res.status_code)
     except Exception as e:
         print("❌ 大学サーバーへの送信失敗", e)
-	reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+    reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
