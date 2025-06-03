@@ -31,6 +31,7 @@ LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
 HASH_LOG_PATH = "hash_log.json"
+LOG_PATH = "log.json"
 
 # --------------------------------------------------
 # 初期化
@@ -41,6 +42,9 @@ handler = WebhookHandler(LINE_SECRET)
 
 if not os.path.exists(HASH_LOG_PATH):
     with open(HASH_LOG_PATH, "w") as f:
+        json.dump({}, f)
+if not os.path.exists(LOG_PATH):
+    with open(LOG_PATH, "w") as f:
         json.dump({}, f)
 
 # --------------------------------------------------
@@ -62,30 +66,37 @@ def callback():
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
-    if event.message.content_provider.type != "line":
-        print("❌ 外部メディアなので無視")
-        return
-
     user_id = event.source.user_id
     today = datetime.now().strftime("%Y-%m-%d")
+    timestamp = datetime.now().isoformat()
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
     message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
-
-    if len(content) < 100:  # 明らかに不正または誤検知なもの
-        print("⚠️ メディアが小さすぎるため無視")
-        return
-
     content_hash = hashlib.sha256(content).hexdigest()
 
     with open(HASH_LOG_PATH, "r") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
 
+    with open("members.json", "r", encoding="utf-8") as f:
+        id_to_name = json.load(f)
+    name = id_to_name.get(user_id, user_id)
+
+    with open(LOG_PATH, "r", encoding="utf-8") as f:
+        log_data = json.load(f)
+
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
+
+        entry = f"{timestamp}（重複:{duplicated_date}）"
+        if name not in log_data:
+            log_data[name] = []
+        if entry not in log_data[name]:
+            log_data[name].append(entry)
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, ensure_ascii=False, indent=2)
 
         try:
             requests.post(
@@ -103,11 +114,18 @@ def handle_media(event):
         reply("⚠️ 重複投稿が検出されました！", event)
         return
 
-    # 新規画像：記録＆サーバー送信
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w") as f:
         json.dump(hash_log, f, ensure_ascii=False, indent=2)
+
+    if name not in log_data:
+        log_data[name] = []
+    if timestamp not in log_data[name]:
+        log_data[name].append(timestamp)
+
+    with open(LOG_PATH, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, ensure_ascii=False, indent=2)
 
     try:
         res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
