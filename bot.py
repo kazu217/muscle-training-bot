@@ -72,24 +72,47 @@ def handle_media(event):
 
     user_id = event.source.user_id
     today = datetime.now().strftime("%Y-%m-%d")
+    now_iso = datetime.now().isoformat()
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
     message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
 
-    if len(content) < 100:  # 明らかに不正または誤検知なもの
+    if len(content) < 100:
         print("⚠️ メディアが小さすぎるため無視")
         return
 
     content_hash = hashlib.sha256(content).hexdigest()
 
+    # ハッシュログ読み込み
     with open(HASH_LOG_PATH, "r") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
 
+    # members.json を使って名前取得
+    with open("members.json", "r", encoding="utf-8") as f:
+        id_to_name = json.load(f)
+    name = id_to_name.get(user_id, user_id)
+
+    # log.json 読み込み
+    if os.path.exists(LOG_PATH):
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            logs = json.load(f)
+    else:
+        logs = {}
+
+    if name not in logs:
+        logs[name] = []
+
+    # 重複判定と送信
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
+
+        # log.json に追加（文字列として）
+        logs[name].append(f"重複: {duplicated_date}")
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(logs, f, ensure_ascii=False, indent=2)
 
         try:
             requests.post(
@@ -107,11 +130,16 @@ def handle_media(event):
         reply("⚠️ 重複投稿が検出されました！", event)
         return
 
-    # 新規画像：記録＆サーバー送信
+    # 新規：hashログに追加
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w") as f:
         json.dump(hash_log, f, ensure_ascii=False, indent=2)
+
+    # log.json に追加（ISO形式で）
+    logs[name].append(now_iso)
+    with open(LOG_PATH, "w", encoding="utf-8") as f:
+        json.dump(logs, f, ensure_ascii=False, indent=2)
 
     try:
         res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
