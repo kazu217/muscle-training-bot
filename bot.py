@@ -32,6 +32,7 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
 HASH_LOG_PATH = "hash_log.json"
 LOG_PATH = "log.json"
+MEMBERS_PATH = "members.json"
 
 # --------------------------------------------------
 # 初期化
@@ -72,8 +73,16 @@ def handle_media(event):
 
     user_id = event.source.user_id
     today = datetime.now().strftime("%Y-%m-%d")
-    now_iso = datetime.now().isoformat()
     print(f"📸 {today} に {user_id} が画像/動画を送信")
+
+    # ID -> 名前変換
+    try:
+        with open(MEMBERS_PATH, "r", encoding="utf-8") as f:
+            id_to_name = json.load(f)
+        name = id_to_name.get(user_id, user_id)
+    except Exception as e:
+        print("❌ members.json 読み込み失敗:", e)
+        name = user_id
 
     message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
@@ -84,35 +93,13 @@ def handle_media(event):
 
     content_hash = hashlib.sha256(content).hexdigest()
 
-    # ハッシュログ読み込み
     with open(HASH_LOG_PATH, "r") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
 
-    # members.json を使って名前取得
-    with open("members.json", "r", encoding="utf-8") as f:
-        id_to_name = json.load(f)
-    name = id_to_name.get(user_id, user_id)
-
-    # log.json 読み込み
-    if os.path.exists(LOG_PATH):
-        with open(LOG_PATH, "r", encoding="utf-8") as f:
-            logs = json.load(f)
-    else:
-        logs = {}
-
-    if name not in logs:
-        logs[name] = []
-
-    # 重複判定と送信
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
-
-        # log.json に追加（文字列として）
-        logs[name].append(f"重複: {duplicated_date}")
-        with open(LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(logs, f, ensure_ascii=False, indent=2)
 
         try:
             requests.post(
@@ -127,27 +114,44 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
+        update_log(name, today, duplicated_date)
         reply("⚠️ 重複投稿が検出されました！", event)
         return
 
-    # 新規：hashログに追加
+    # 新規画像
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w") as f:
         json.dump(hash_log, f, ensure_ascii=False, indent=2)
 
-    # log.json に追加（ISO形式で）
-    logs[name].append(now_iso)
-    with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(logs, f, ensure_ascii=False, indent=2)
-
     try:
         res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
         print("✅ 大学サーバーに送信成功", res.status_code)
+        update_log(name, today)
         reply("受け取りました！", event)
     except Exception as e:
         print("❌ 大学サーバーへの送信失敗", e)
         reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+
+# --------------------------------------------------
+# ログ記録関数
+# --------------------------------------------------
+def update_log(name, date, duplicate_with=None):
+    logs = {}
+    if os.path.exists(LOG_PATH):
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            logs = json.load(f)
+
+    if name not in logs:
+        logs[name] = []
+
+    if duplicate_with:
+        logs[name].append({"date": date, "duplicate_with": duplicate_with})
+    else:
+        logs[name].append(date)
+
+    with open(LOG_PATH, "w", encoding="utf-8") as f:
+        json.dump(logs, f, ensure_ascii=False, indent=2)
 
 # --------------------------------------------------
 # テキストメッセージ応答
