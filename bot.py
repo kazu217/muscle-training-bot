@@ -90,11 +90,9 @@ def handle_media(event):
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
 
-        entry = f"{timestamp}（重複:{duplicated_date}）"
         if name not in log_data:
             log_data[name] = []
-        if entry not in log_data[name]:
-            log_data[name].append(entry)
+        log_data[name].append(f"重複: {duplicated_date}")
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(log_data, f, ensure_ascii=False, indent=2)
 
@@ -121,8 +119,7 @@ def handle_media(event):
 
     if name not in log_data:
         log_data[name] = []
-    if timestamp not in log_data[name]:
-        log_data[name].append(timestamp)
+    log_data[name].append(timestamp)
 
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(log_data, f, ensure_ascii=False, indent=2)
@@ -146,7 +143,7 @@ def handle_text(event):
         reply("チョコミントよりもあ・な・た", event)
         return
     if text.endswith("募"):
-        reply("🉑", event)
+        reply("🆑", event)
         return
     if text.endswith("ちゃん！"):
         reply("はーい", event)
