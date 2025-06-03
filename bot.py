@@ -31,6 +31,7 @@ LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
 HASH_LOG_PATH = "hash_log.json"
+LOG_PATH = "log.json"
 
 # --------------------------------------------------
 # 初期化
@@ -41,6 +42,9 @@ handler = WebhookHandler(LINE_SECRET)
 
 if not os.path.exists(HASH_LOG_PATH):
     with open(HASH_LOG_PATH, "w") as f:
+        json.dump({}, f)
+if not os.path.exists(LOG_PATH):
+    with open(LOG_PATH, "w") as f:
         json.dump({}, f)
 
 # --------------------------------------------------
@@ -128,7 +132,7 @@ def handle_text(event):
         reply("チョコミントよりもあ・な・た", event)
         return
     if text.endswith("募"):
-        reply("🉑", event)
+        reply("🆑", event)
         return
     if text.endswith("ちゃん！"):
         reply("はーい", event)
