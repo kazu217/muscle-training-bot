@@ -62,12 +62,21 @@ def callback():
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
+    if event.message.content_provider.type != "line":
+        print("❌ 外部メディアなので無視")
+        return
+
     user_id = event.source.user_id
     today = datetime.now().strftime("%Y-%m-%d")
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
     message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
+
+    if len(content) < 100:  # 明らかに不正または誤検知なもの
+        print("⚠️ メディアが小さすぎるため無視")
+        return
+
     content_hash = hashlib.sha256(content).hexdigest()
 
     with open(HASH_LOG_PATH, "r") as f:
@@ -78,7 +87,6 @@ def handle_media(event):
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
 
-        # 大学サーバーに重複を報告
         try:
             requests.post(
                 UNIV_SERVER_ENDPOINT,
