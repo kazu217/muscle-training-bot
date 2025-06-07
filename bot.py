@@ -70,7 +70,6 @@ def handle_media(event):
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         print("👥 対象外のグループからのメディア → 無視")
         return
-
     if event.message.content_provider.type != "line":
         print("❌ 外部メディアなので無視")
         return
@@ -132,7 +131,7 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
-        reply(f"{duplicated_date} の投稿と一致", event)
+        replyf"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
 
     # 新規：hashログに追加
