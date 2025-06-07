@@ -67,6 +67,9 @@ def callback():
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
+    if event.source.type == "group":
+        group_id = event.source.group_id
+        print(f"📢 グループID: {group_id}")
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         print("👥 対象外のグループからのメディア → 無視")
         return
@@ -107,6 +110,16 @@ def handle_media(event):
 
     if name not in logs:
         logs[name] = []
+
+    already_recorded_today = any(
+        (entry == today or (isinstance(entry, dict) and entry.get("date") == today))
+        for entry in logs[name]
+    )
+    if already_recorded_today:
+        print(f"⚠️ {name} は {today} にすでに投稿済み。記録をスキップします。")
+        reply("すでに今日の投稿は受け取っています！", event)
+        return
+
 
     # 重複判定と送信
     if content_hash in user_hashes:
