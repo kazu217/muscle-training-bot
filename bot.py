@@ -69,8 +69,16 @@ def handle_media(event):
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         print("👥 対象外のグループからのメディア → 無視")
         return
+
     if event.message.content_provider.type != "line":
         print("❌ 外部メディアなので無視")
+        return
+
+    message_id = event.message.id
+    with open(PROCESSED_IDS_PATH, "r") as f:
+        processed_ids = json.load(f)
+    if message_id in processed_ids:
+        print(f"🔁 {message_id} はすでに処理済み → スキップ")
         return
 
     user_id = event.source.user_id
@@ -81,9 +89,7 @@ def handle_media(event):
 
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
-    message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
-
     if len(content) < 100:
         print("⚠️ メディアが小さすぎるため無視")
         return
@@ -95,7 +101,7 @@ def handle_media(event):
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
 
-    # members.json を使って名前取得
+    # 名前取得
     with open("members.json", "r", encoding="utf-8") as f:
         id_to_name = json.load(f)
     name = id_to_name.get(user_id, user_id)
@@ -116,16 +122,13 @@ def handle_media(event):
     )
     if already_recorded_today:
         print(f"⚠️ {name} は {today} にすでに投稿済み。記録をスキップします。")
-        reply("すでに今日の投稿は受け取っています！", event)
+        safe_reply("すでに今日の投稿は受け取っています！", event)
         return
 
-
-    # 重複判定と送信
+    # 重複判定
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
-
-        # log.json に追加（文字列として）
         logs[name].append(f"重複: {duplicated_date}")
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -143,16 +146,15 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
-        reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
+        safe_reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
 
-    # 新規：hashログに追加
+    # 正常記録処理
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w") as f:
         json.dump(hash_log, f, ensure_ascii=False, indent=2)
 
-    # log.json に追加（ISO形式で）
     logs[name].append(now_iso)
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -160,11 +162,16 @@ def handle_media(event):
     try:
         res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
         print("✅ 大学サーバーに送信成功", res.status_code)
-        reply("受け取りました！", event)
+        safe_reply("受け取りました！", event)
     except Exception as e:
         print("❌ 大学サーバーへの送信失敗", e)
-        reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
 
+    # イベントIDを記録（上限100件に制限して管理）
+    processed_ids.append(message_id)
+    processed_ids = processed_ids[-100:]
+    with open(PROCESSED_IDS_PATH, "w") as f:
+        json.dump(processed_ids, f)
 # --------------------------------------------------
 # テキストメッセージ応答
 # --------------------------------------------------
