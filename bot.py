@@ -12,8 +12,7 @@ import csv
 import json
 import os
 import hashlib
-from datetime import datetime
-
+from datetime import datetime, timedelta, timezone
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, abort
@@ -75,8 +74,11 @@ def handle_media(event):
         return
 
     user_id = event.source.user_id
-    today = datetime.now().strftime("%Y-%m-%d")
-    now_iso = datetime.now().isoformat()
+    JST = timezone(timedelta(hours=9))
+    now = datetime.now(JST)
+    today = now.strftime("%Y-%m-%d")
+    now_iso = now.isoformat()
+
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
     message_id = event.message.id
