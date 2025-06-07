@@ -132,7 +132,7 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
-        reply({duplicated_date} の投稿と一致, event)
+        reply(f"{duplicated_date} の投稿と一致", event)
         return
 
     # 新規：hashログに追加
