@@ -32,7 +32,7 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
 HASH_LOG_PATH = "hash_log.json"
 LOG_PATH = "log.json"
-LINE_GROUP_ID = "C49b1b839c4344dcd379c1029b233c2a8"
+LINE_GROUP_ID = "C1d9ed412f2141da57e47bd28cec532a4"
 
 # --------------------------------------------------
 # 初期化
