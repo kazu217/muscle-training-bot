@@ -217,7 +217,10 @@ def send_progress(name: str, event):
 # 共通返信関数
 # --------------------------------------------------
 def reply(message: str, event):
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+    try:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+    except Exception as e:
+        print("❌ リプライ失敗:", e)
 
 # --------------------------------------------------
 # ヘルスチェックルート
