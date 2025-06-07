@@ -12,7 +12,8 @@ import csv
 import json
 import os
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from linebot.exceptions import LineBotApiError
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, abort
@@ -21,6 +22,7 @@ from linebot.models import (
     ImageMessage, VideoMessage, MessageEvent,
     TextMessage, TextSendMessage
 )
+PROCESSED_IDS_PATH = "processed_event_ids.json"
 
 # --------------------------------------------------
 # 環境変数・定数
@@ -46,7 +48,9 @@ if not os.path.exists(HASH_LOG_PATH):
 if not os.path.exists(LOG_PATH):
     with open(LOG_PATH, "w") as f:
         json.dump({}, f)
-
+if not os.path.exists(PROCESSED_IDS_PATH):
+    with open(PROCESSED_IDS_PATH, "w") as f:
+        json.dump([], f)
 # --------------------------------------------------
 # Webhook エンドポイント
 # --------------------------------------------------
@@ -69,27 +73,18 @@ def handle_media(event):
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         print("👥 対象外のグループからのメディア → 無視")
         return
-
     if event.message.content_provider.type != "line":
         print("❌ 外部メディアなので無視")
         return
 
-    message_id = event.message.id
-    with open(PROCESSED_IDS_PATH, "r") as f:
-        processed_ids = json.load(f)
-    if message_id in processed_ids:
-        print(f"🔁 {message_id} はすでに処理済み → スキップ")
-        return
-
     user_id = event.source.user_id
-    JST = timezone(timedelta(hours=9))
-    now = datetime.now(JST)
-    today = now.strftime("%Y-%m-%d")
-    now_iso = now.isoformat()
-
+    today = datetime.now().strftime("%Y-%m-%d")
+    now_iso = datetime.now().isoformat()
     print(f"📸 {today} に {user_id} が画像/動画を送信")
 
+    message_id = event.message.id
     content = line_bot_api.get_message_content(message_id).content
+
     if len(content) < 100:
         print("⚠️ メディアが小さすぎるため無視")
         return
@@ -101,7 +96,7 @@ def handle_media(event):
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
 
-    # 名前取得
+    # members.json を使って名前取得
     with open("members.json", "r", encoding="utf-8") as f:
         id_to_name = json.load(f)
     name = id_to_name.get(user_id, user_id)
@@ -122,13 +117,16 @@ def handle_media(event):
     )
     if already_recorded_today:
         print(f"⚠️ {name} は {today} にすでに投稿済み。記録をスキップします。")
-        safe_reply("すでに今日の投稿は受け取っています！", event)
+        reply("すでに今日の投稿は受け取っています！", event)
         return
 
-    # 重複判定
+
+    # 重複判定と送信
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
+
+        # log.json に追加（文字列として）
         logs[name].append(f"重複: {duplicated_date}")
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -146,15 +144,16 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
-        safe_reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
+        reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
 
-    # 正常記録処理
+    # 新規：hashログに追加
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w") as f:
         json.dump(hash_log, f, ensure_ascii=False, indent=2)
 
+    # log.json に追加（ISO形式で）
     logs[name].append(now_iso)
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -162,16 +161,11 @@ def handle_media(event):
     try:
         res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
         print("✅ 大学サーバーに送信成功", res.status_code)
-        safe_reply("受け取りました！", event)
+        reply("受け取りました！", event)
     except Exception as e:
         print("❌ 大学サーバーへの送信失敗", e)
-        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+        reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
 
-    # イベントIDを記録（上限100件に制限して管理）
-    processed_ids.append(message_id)
-    processed_ids = processed_ids[-100:]
-    with open(PROCESSED_IDS_PATH, "w") as f:
-        json.dump(processed_ids, f)
 # --------------------------------------------------
 # テキストメッセージ応答
 # --------------------------------------------------
@@ -226,11 +220,14 @@ def send_progress(name: str, event):
 # 共通返信関数
 # --------------------------------------------------
 def reply(message: str, event):
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+def safe_reply(message: str, event):
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+    except LineBotApiError as e:
+        print(f"❌ reply_token 使用失敗: {e}")
     except Exception as e:
-        print("❌ リプライ失敗:", e)
-
+        print(f"❌ その他のリプライエラー: {e}")
 # --------------------------------------------------
 # ヘルスチェックルート
 # --------------------------------------------------
