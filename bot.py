@@ -2,7 +2,8 @@
 """LINE Bot main server (Render)
 --------------------------------------------------
 機能:
-1. 画像/動画を受信すると大学サーバー(API)へ user_id と日付を POST（重複投稿なら duplicate_with も送る）
+1. 画像/動画を受信すると大学サーバー(API)へ user_id と日付を POST
+   （重複投稿なら duplicate_with も送る）
 2. 固定フレーズ応答
 3. 「<名前>途中経過」で今月の忘れ回数を返信
 4. `/` に "LINE bot is alive" を返す
@@ -12,19 +13,21 @@ import csv
 import json
 import os
 import hashlib
+import time
 from datetime import datetime, timezone, timedelta
-from linebot.exceptions import LineBotApiError
+
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import LineBotApiError
 from linebot.models import (
     ImageMessage, VideoMessage, MessageEvent,
     TextMessage, TextSendMessage
 )
 
 # --------------------------------------------------
-# 定数・ファイルパス
+# パス & 定数
 # --------------------------------------------------
 PROCESSED_IDS_PATH = "processed_event_ids.json"
 HASH_LOG_PATH = "hash_log.json"
@@ -58,7 +61,48 @@ for path, default in [
             json.dump(default, f, ensure_ascii=False, indent=2)
 
 # --------------------------------------------------
-# Webhookエンドポイント
+# 共通ユーティリティ
+# --------------------------------------------------
+JST = timezone(timedelta(hours=9))
+
+
+def now_jst():
+    """現在時刻(JST)を返す"""
+    return datetime.now(JST)
+
+
+def fetch_content_with_retry(message_id: str, retries: int = 3, delay: float = 0.3):
+    """LINEサーバーからメディアを取得。400 Bad Request が返る場合があるのでリトライ"""
+    for i in range(retries):
+        try:
+            return line_bot_api.get_message_content(message_id).content
+        except LineBotApiError as e:
+            if e.status_code == 400 and i < retries - 1:
+                time.sleep(delay)
+                continue
+            raise
+
+
+def safe_reply(message: str, event):
+    """reply_token 無効時に落ちないリプライ"""
+    try:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+    except LineBotApiError as e:
+        print(f"❌ reply_token 使用失敗: {e}")
+    except Exception as e:
+        print(f"❌ その他のリプライエラー: {e}")
+
+
+def reply(message: str, event):
+    """通常リプライ（デバッグ用）"""
+    try:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+    except Exception as e:
+        print("❌ 通常リプライ失敗:", e)
+
+
+# --------------------------------------------------
+# Webhook
 # --------------------------------------------------
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -72,38 +116,59 @@ def callback():
     return "OK"
 
 # --------------------------------------------------
-# メディア処理（画像・動画）
+# メディア処理
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
+    # --- グループ/プロバイダチェック ---
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
-        print("👥 対象外のグループからのメディア → 無視")
+        print("👥 対象外グループ → 無視")
         return
     if event.message.content_provider.type != "line":
-        print("❌ 外部メディアなので無視")
+        print("❌ 外部メディア → 無視")
         return
 
     message_id = event.message.id
+
+    # --- 再送防止: 処理中フラグを先に立てる ---
     with open(PROCESSED_IDS_PATH, "r", encoding="utf-8") as f:
         processed_ids = json.load(f)
     if message_id in processed_ids:
-        print(f"🔁 {message_id} はすでに処理済み → スキップ")
+        print(f"🔁 {message_id} は処理済み → スキップ")
         return
+    processed_ids.append(message_id)
+    with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
+        json.dump(processed_ids, f, ensure_ascii=False, indent=2)
 
+    # --- 基本情報 ---
     user_id = event.source.user_id
-    JST = timezone(timedelta(hours=9))
-    now = datetime.now(JST)
+    now = now_jst()
     today = now.strftime("%Y-%m-%d")
     now_iso = now.isoformat()
-    print(f"📸 {today} に {user_id} が画像/動画を送信")
+    print(f"📸 {today} {now.time()} に {user_id} がメディア送信")
 
-    content = line_bot_api.get_message_content(message_id).content
+    # --- メディア取得 (リトライ付き) ---
+    try:
+        content = fetch_content_with_retry(message_id)
+    except LineBotApiError as e:
+        print(f"❌ コンテンツ取得失敗: {e} → フラグ巻き戻し")
+        # 巻き戻し
+        processed_ids.remove(message_id)
+        with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
+            json.dump(processed_ids, f, ensure_ascii=False, indent=2)
+        return
+
     if len(content) < 100:
-        print("⚠️ メディアが小さすぎるため無視")
+        print("⚠️ メディアが小さすぎる → 無視")
+        # 巻き戻し
+        processed_ids.remove(message_id)
+        with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
+            json.dump(processed_ids, f, ensure_ascii=False, indent=2)
         return
 
     content_hash = hashlib.sha256(content).hexdigest()
 
+    # --- 各種ログ読み込み ---
     with open(HASH_LOG_PATH, "r", encoding="utf-8") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
@@ -117,18 +182,16 @@ def handle_media(event):
     if name not in logs:
         logs[name] = []
 
-    already_recorded_today = any(
-        (entry == today or (isinstance(entry, dict) and entry.get("date") == today))
-        for entry in logs[name]
-    )
-    if already_recorded_today:
-        print(f"⚠️ {name} は {today} にすでに投稿済み。記録をスキップします。")
+    # --- 今日すでに投稿済み? ---
+    if any((entry == today or isinstance(entry, dict) and entry.get("date") == today) for entry in logs[name]):
+        print(f"⚠️ {name} は今日すでに投稿済み → スキップ")
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
 
+    # --- 重複チェック ---
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
-        print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
+        print(f"⚠️ 重複メディア ({duplicated_date})")
         logs[name].append(f"重複: {duplicated_date}")
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -140,10 +203,11 @@ def handle_media(event):
                 "duplicate_with": duplicated_date
             })
         except Exception as e:
-            print("❌ 重複通知失敗", e)
+            print("❌ 重複通知失敗:", e)
         safe_reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
 
+    # --- 正常登録 ---
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w", encoding="utf-8") as f:
@@ -158,14 +222,13 @@ def handle_media(event):
             "user_id": user_id,
             "date": today
         })
-        print("✅ 大学サーバーに送信成功", res.status_code)
+        print("✅ 大学サーバー送信:", res.status_code)
         safe_reply("受け取りました！", event)
     except Exception as e:
-        print("❌ 大学サーバーへの送信失敗", e)
-        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+        print("❌ 大学サーバー送信失敗:", e)
+        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいて再送してください。", event)
 
-    # message_id 記録
-    processed_ids.append(message_id)
+    # --- processed_ids を最新100件に整理 ---
     processed_ids = processed_ids[-100:]
     with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
         json.dump(processed_ids, f, ensure_ascii=False, indent=2)
@@ -210,23 +273,6 @@ def send_progress(name: str, event):
         rows = list(csv.reader(f))
     missed = sum(1 for row in rows if len(row) > index and row[index] == "1")
     reply(f"{name}は今月{missed}回忘れてます", event)
-
-# --------------------------------------------------
-# 共通リプライ関数（安全版）
-# --------------------------------------------------
-def reply(message: str, event):
-    try:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
-    except Exception as e:
-        print("❌ 通常リプライ失敗:", e)
-
-def safe_reply(message: str, event):
-    try:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
-    except LineBotApiError as e:
-        print(f"❌ reply_token 使用失敗: {e}")
-    except Exception as e:
-        print(f"❌ その他のリプライエラー: {e}")
 
 # --------------------------------------------------
 # ヘルスチェック
