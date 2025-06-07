@@ -32,6 +32,7 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
 HASH_LOG_PATH = "hash_log.json"
 LOG_PATH = "log.json"
+LINE_GROUP_ID = "C49b1b839c4344dcd379c1029b233c2a8"
 
 # --------------------------------------------------
 # 初期化
@@ -66,6 +67,10 @@ def callback():
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
+    if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
+        print("👥 対象外のグループからのメディア → 無視")
+        return
+
     if event.message.content_provider.type != "line":
         print("❌ 外部メディアなので無視")
         return
@@ -127,7 +132,7 @@ def handle_media(event):
         except Exception as e:
             print("❌ 重複通知失敗", e)
 
-        reply("⚠️ 重複投稿が検出されました！", event)
+        reply({duplicated_date} の投稿と一致, event)
         return
 
     # 新規：hashログに追加
