@@ -2,7 +2,7 @@
 """LINE Bot main server (Render)
 --------------------------------------------------
 機能:
-1. 画像/動画を受信すると大学サーバー(API)へ user_id と日付を POST
+1. 画像/動画を受信すると大学サーバー(API) へ user_id と日付を POST
    （重複投稿なら duplicate_with も送る）
 2. 固定フレーズ応答
 3. 「<名前>途中経過」で今月の忘れ回数を返信
@@ -14,6 +14,7 @@ import json
 import os
 import hashlib
 import time
+import threading                     # ★ changed
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -67,12 +68,10 @@ JST = timezone(timedelta(hours=9))
 
 
 def now_jst():
-    """現在時刻(JST)を返す"""
     return datetime.now(JST)
 
 
 def fetch_content_with_retry(message_id: str, retries: int = 3, delay: float = 0.3):
-    """LINEサーバーからメディアを取得。400 Bad Request が返る場合があるのでリトライ"""
     for i in range(retries):
         try:
             return line_bot_api.get_message_content(message_id).content
@@ -84,7 +83,6 @@ def fetch_content_with_retry(message_id: str, retries: int = 3, delay: float = 0
 
 
 def safe_reply(message: str, event):
-    """reply_token 無効時に落ちないリプライ"""
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
     except LineBotApiError as e:
@@ -93,13 +91,12 @@ def safe_reply(message: str, event):
         print(f"❌ その他のリプライエラー: {e}")
 
 
-def reply(message: str, event):
-    """通常リプライ（デバッグ用）"""
+def send_to_univ(payload: dict):      # ★ changed
+    """大学サーバーへ非同期 POST（3 秒タイムアウト）"""
     try:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
-    except Exception as e:
-        print("❌ 通常リプライ失敗:", e)
-
+        requests.post(UNIV_SERVER_ENDPOINT, json=payload, timeout=3)
+    except requests.exceptions.RequestException as e:
+        print("❌ 大学サーバー送信失敗:", e)
 
 # --------------------------------------------------
 # Webhook
@@ -120,7 +117,6 @@ def callback():
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
-    # --- グループ/プロバイダチェック ---
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         print("👥 対象外グループ → 無視")
         return
@@ -130,7 +126,7 @@ def handle_media(event):
 
     message_id = event.message.id
 
-    # --- 再送防止: 処理中フラグを先に立てる ---
+    # --- 再送防止 ---
     with open(PROCESSED_IDS_PATH, "r", encoding="utf-8") as f:
         processed_ids = json.load(f)
     if message_id in processed_ids:
@@ -147,12 +143,11 @@ def handle_media(event):
     now_iso = now.isoformat()
     print(f"📸 {today} {now.time()} に {user_id} がメディア送信")
 
-    # --- メディア取得 (リトライ付き) ---
+    # --- メディア取得 ---
     try:
         content = fetch_content_with_retry(message_id)
     except LineBotApiError as e:
         print(f"❌ コンテンツ取得失敗: {e} → フラグ巻き戻し")
-        # 巻き戻し
         processed_ids.remove(message_id)
         with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
             json.dump(processed_ids, f, ensure_ascii=False, indent=2)
@@ -160,7 +155,6 @@ def handle_media(event):
 
     if len(content) < 100:
         print("⚠️ メディアが小さすぎる → 無視")
-        # 巻き戻し
         processed_ids.remove(message_id)
         with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
             json.dump(processed_ids, f, ensure_ascii=False, indent=2)
@@ -168,7 +162,7 @@ def handle_media(event):
 
     content_hash = hashlib.sha256(content).hexdigest()
 
-    # --- 各種ログ読み込み ---
+    # --- ログ読み込み ---
     with open(HASH_LOG_PATH, "r", encoding="utf-8") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
@@ -184,7 +178,7 @@ def handle_media(event):
 
     # --- 今日すでに投稿済み? ---
     if any((entry == today or isinstance(entry, dict) and entry.get("date") == today) for entry in logs[name]):
-        print(f"⚠️ {name} は今日すでに投稿済み → スキップ")
+        print(f"⚠️ {name} は今日すでに投稿済み")
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
 
@@ -195,15 +189,15 @@ def handle_media(event):
         logs[name].append(f"重複: {duplicated_date}")
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
-        try:
-            requests.post(UNIV_SERVER_ENDPOINT, json={
-                "user_id": user_id,
-                "date": today,
-                "duplicate": True,
-                "duplicate_with": duplicated_date
-            })
-        except Exception as e:
-            print("❌ 重複通知失敗:", e)
+
+        # 非同期で大学サーバーへ通知
+        threading.Thread(target=send_to_univ, args=({
+            "user_id": user_id,
+            "date": today,
+            "duplicate": True,
+            "duplicate_with": duplicated_date
+        },), daemon=True).start()
+
         safe_reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
 
@@ -217,18 +211,16 @@ def handle_media(event):
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
 
-    try:
-        res = requests.post(UNIV_SERVER_ENDPOINT, json={
-            "user_id": user_id,
-            "date": today
-        })
-        print("✅ 大学サーバー送信:", res.status_code)
-        safe_reply("受け取りました！", event)
-    except Exception as e:
-        print("❌ 大学サーバー送信失敗:", e)
-        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいて再送してください。", event)
+    # 先にユーザーへ返信
+    safe_reply("受け取りました！", event)
 
-    # --- processed_ids を最新100件に整理 ---
+    # 非同期で大学サーバーへ送信
+    threading.Thread(target=send_to_univ, args=({
+        "user_id": user_id,
+        "date": today
+    },), daemon=True).start()
+
+    # processed_ids 整理
     processed_ids = processed_ids[-100:]
     with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
         json.dump(processed_ids, f, ensure_ascii=False, indent=2)
@@ -241,6 +233,8 @@ def handle_text(event):
     text = event.message.text.strip()
     if text == "何が好き？":
         reply("チョコミントよりもあ・な・た", event)
+    elif text.endswith("まんこ"):
+        reply("😻", event)
     elif text.endswith("募"):
         reply("🆑", event)
     elif text.endswith("ちゃん！"):
