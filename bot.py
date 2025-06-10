@@ -43,6 +43,7 @@ LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_GROUP_ID = "C1d9ed412f2141da57e47bd28cec532a4"
 UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
+UNIV_TIMEOUT_SEC = 5   # 大学サーバーへの同期送信タイムアウト
 
 # --------------------------------------------------
 # 初期化
@@ -67,12 +68,11 @@ JST = timezone(timedelta(hours=9))
 
 
 def now_jst():
-    """現在時刻(JST)を返す"""
     return datetime.now(JST)
 
 
 def fetch_content_with_retry(message_id: str, retries: int = 3, delay: float = 0.3):
-    """LINEサーバーからメディアを取得。400 Bad Request が返る場合があるのでリトライ"""
+    """LINE サーバーからメディアを取得。400 Bad Request が出る場合があるのでリトライ"""
     for i in range(retries):
         try:
             return line_bot_api.get_message_content(message_id).content
@@ -84,7 +84,6 @@ def fetch_content_with_retry(message_id: str, retries: int = 3, delay: float = 0
 
 
 def safe_reply(message: str, event):
-    """reply_token 無効時に落ちないリプライ"""
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
     except LineBotApiError as e:
@@ -94,7 +93,7 @@ def safe_reply(message: str, event):
 
 
 def reply(message: str, event):
-    """通常リプライ（デバッグ用）"""
+    """デバッグ・短文用"""
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
     except Exception as e:
@@ -116,21 +115,23 @@ def callback():
     return "OK"
 
 # --------------------------------------------------
-# メディア処理
+# 画像 / 動画 メッセージ
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
-    # --- グループ/プロバイダチェック ---
-    if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
-        print("👥 対象外グループ → 無視")
+    # ---------- グループ判定 ----------
+    try:
+        if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
+            print("👥 対象外グループ or 個別トーク → 無視")
+            return
+    except AttributeError:  # user / room など group_id が存在しない
+        print("👤 個別/ルーム → 無視")
         return
-    if event.message.content_provider.type != "line":
-        print("❌ 外部メディア → 無視")
-        return
+    # ----------------------------------
 
     message_id = event.message.id
 
-    # --- 再送防止: 処理中フラグを先に立てる ---
+    # ---------- 再送防止 ----------
     with open(PROCESSED_IDS_PATH, "r", encoding="utf-8") as f:
         processed_ids = json.load(f)
     if message_id in processed_ids:
@@ -139,20 +140,20 @@ def handle_media(event):
     processed_ids.append(message_id)
     with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
         json.dump(processed_ids, f, ensure_ascii=False, indent=2)
+    # ----------------------------------
 
-    # --- 基本情報 ---
     user_id = event.source.user_id
     now = now_jst()
     today = now.strftime("%Y-%m-%d")
     now_iso = now.isoformat()
     print(f"📸 {today} {now.time()} に {user_id} がメディア送信")
 
-    # --- メディア取得 (リトライ付き) ---
+    # ---------- メディア取得 ----------
     try:
         content = fetch_content_with_retry(message_id)
     except LineBotApiError as e:
-        print(f"❌ コンテンツ取得失敗: {e} → フラグ巻き戻し")
-        # 巻き戻し
+        print(f"❌ コンテンツ取得失敗: {e}")
+        # フラグ巻き戻し
         processed_ids.remove(message_id)
         with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
             json.dump(processed_ids, f, ensure_ascii=False, indent=2)
@@ -160,15 +161,15 @@ def handle_media(event):
 
     if len(content) < 100:
         print("⚠️ メディアが小さすぎる → 無視")
-        # 巻き戻し
         processed_ids.remove(message_id)
         with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
             json.dump(processed_ids, f, ensure_ascii=False, indent=2)
         return
+    # ----------------------------------
 
     content_hash = hashlib.sha256(content).hexdigest()
 
-    # --- 各種ログ読み込み ---
+    # ---------- ローカルログ読み込み ----------
     with open(HASH_LOG_PATH, "r", encoding="utf-8") as f:
         hash_log = json.load(f)
     user_hashes = hash_log.get(user_id, {})
@@ -181,14 +182,16 @@ def handle_media(event):
         logs = json.load(f)
     if name not in logs:
         logs[name] = []
+    # -------------------------------------------
 
-    # --- 今日すでに投稿済み? ---
+    # ---------- 今日すでに投稿? ----------
     if any((entry == today or isinstance(entry, dict) and entry.get("date") == today) for entry in logs[name]):
-        print(f"⚠️ {name} は今日すでに投稿済み → スキップ")
+        print(f"⚠️ {name} は今日すでに投稿済み")
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
+    # ----------------------------------
 
-    # --- 重複チェック ---
+    # ---------- 重複判定 ----------
     if content_hash in user_hashes:
         duplicated_date = user_hashes[content_hash]
         print(f"⚠️ 重複メディア ({duplicated_date})")
@@ -196,18 +199,23 @@ def handle_media(event):
         with open(LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
         try:
-            requests.post(UNIV_SERVER_ENDPOINT, json={
-                "user_id": user_id,
-                "date": today,
-                "duplicate": True,
-                "duplicate_with": duplicated_date
-            })
-        except Exception as e:
+            requests.post(
+                UNIV_SERVER_ENDPOINT,
+                json={
+                    "user_id": user_id,
+                    "date": today,
+                    "duplicate": True,
+                    "duplicate_with": duplicated_date
+                },
+                timeout=UNIV_TIMEOUT_SEC
+            )
+        except requests.exceptions.RequestException as e:
             print("❌ 重複通知失敗:", e)
         safe_reply(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致", event)
         return
+    # ----------------------------------
 
-    # --- 正常登録 ---
+    # ---------- 新規メディア: ローカル更新 ----------
     user_hashes[content_hash] = today
     hash_log[user_id] = user_hashes
     with open(HASH_LOG_PATH, "w", encoding="utf-8") as f:
@@ -216,33 +224,45 @@ def handle_media(event):
     logs[name].append(now_iso)
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
+    # ----------------------------------
 
+    # ---------- 大学サーバー送信 (同期・タイムアウト5秒) ----------
     try:
-        res = requests.post(UNIV_SERVER_ENDPOINT, json={
-            "user_id": user_id,
-            "date": today
-        })
+        res = requests.post(
+            UNIV_SERVER_ENDPOINT,
+            json={"user_id": user_id, "date": today},
+            timeout=UNIV_TIMEOUT_SEC
+        )
         print("✅ 大学サーバー送信:", res.status_code)
         safe_reply("受け取りました！", event)
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print("❌ 大学サーバー送信失敗:", e)
-        safe_reply("⚠️ エラー：記録に失敗しました。時間をおいて再送してください。", event)
+        safe_reply("⚠️ 大学サーバーへ記録できませんでした。\n時間をおいて再送してください。", event)
+    # ----------------------------------
 
-    # --- processed_ids を最新100件に整理 ---
+    # ---------- processed_ids 整理 ----------
     processed_ids = processed_ids[-100:]
     with open(PROCESSED_IDS_PATH, "w", encoding="utf-8") as f:
         json.dump(processed_ids, f, ensure_ascii=False, indent=2)
+    # --------------------------------------
 
 # --------------------------------------------------
 # テキスト応答
 # --------------------------------------------------
-@handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessage))
 def handle_text(event):
+    # グループ判定
+    try:
+        if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
+            return
+    except AttributeError:
+        return
+
     text = event.message.text.strip()
     if text == "何が好き？":
         reply("チョコミントよりもあ・な・た", event)
     elif text.endswith("募"):
-        reply("🆑", event)
+        reply("㋕", event)
     elif text.endswith("ちゃん！"):
         reply("はーい", event)
     elif text.endswith("ちんげのきたろう"):
