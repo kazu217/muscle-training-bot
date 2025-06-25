@@ -28,6 +28,15 @@ from linebot.models import (
 BASE_DIR = Path(__file__).resolve().parent   # = ~/musclebot
 os.chdir(BASE_DIR)                           # ★ これで相対パスは常に ~/musclebot
 
+
+# ★★★ ここからデバッグ用 ★★★
+import os, sys
+print("★ CWD:", os.getcwd(), file=sys.stderr)
+print("★ bot.py:", __file__, file=sys.stderr)
+print("★ LOG_PATH:", (Path('log.json')).resolve(), file=sys.stderr)
+# ★★★★★★★★★★★★★★★★★★★★
+
+
 # --------------------------------------------------
 # ファイルパス
 # --------------------------------------------------
