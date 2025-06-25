@@ -40,10 +40,10 @@ print("★ LOG_PATH:", (Path('log.json')).resolve(), file=sys.stderr)
 # --------------------------------------------------
 # ファイルパス
 # --------------------------------------------------
-LOG_PATH        = Path("log.json")
-MEMBERS_PATH    = Path("members.json")
-DAILY_CSV_PATH  = Path("daily.csv")
-
+#LOG_PATH        = Path("log.json")
+#MEMBERS_PATH    = Path("members.json")
+#DAILY_CSV_PATH  = Path("daily.csv")
+LOG_PATH = "log.json"
 # --------------------------------------------------
 # 環境変数
 # --------------------------------------------------
