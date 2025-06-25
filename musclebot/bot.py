@@ -8,7 +8,7 @@
 4. `/` に "LINE bot is alive" を返す
 """
 
-import csv, json, os
+import csv, json, os, hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -23,12 +23,17 @@ from linebot.models import (
 )
 
 # --------------------------------------------------
-# パス & 定数
+# ディレクトリ固定
 # --------------------------------------------------
-BASE_DIR        = Path(__file__).resolve().parent
-LOG_PATH        = BASE_DIR / "log.json"
-MEMBERS_PATH    = BASE_DIR / "members.json"
-DAILY_CSV_PATH  = BASE_DIR / "daily.csv"
+BASE_DIR = Path(__file__).resolve().parent   # = ~/musclebot
+os.chdir(BASE_DIR)                           # ★ これで相対パスは常に ~/musclebot
+
+# --------------------------------------------------
+# ファイルパス
+# --------------------------------------------------
+LOG_PATH        = Path("log.json")
+MEMBERS_PATH    = Path("members.json")
+DAILY_CSV_PATH  = Path("daily.csv")
 
 # --------------------------------------------------
 # 環境変数
@@ -46,7 +51,6 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_TOKEN)
 handler      = WebhookHandler(LINE_SECRET)
 
-# log.json が無ければ空で作成
 if not LOG_PATH.exists():
     LOG_PATH.write_text("{}", encoding="utf-8")
 
@@ -67,7 +71,7 @@ def callback():
     return "OK"
 
 # --------------------------------------------------
-# 画像・動画メッセージ
+# メディア処理
 # --------------------------------------------------
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
@@ -96,17 +100,16 @@ def handle_media(event):
 
     # 今日すでに投稿済み？
     if any(entry.startswith(today) for entry in logs[name]):
-        print(f"⚠️ {name} は今日すでに投稿済み → スキップ")
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
 
-    # ----- 記録 -----
+    # 記録
     logs[name].append(now_iso)
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
-    print("✅ log.json へ追記完了")
+    print("✅ log.json に追記完了")
 
-    # 大学サーバーへ（失敗しても無視）
+    # 大学サーバーへ送信（失敗は無視）
     try:
         requests.post(UNIV_SERVER_ENDPOINT,
                       json={"user_id": user_id, "date": today},
@@ -125,7 +128,7 @@ def handle_text(event):
     if txt == "何が好き？":
         reply("チョコミントよりもあ・な・た", event)
     elif txt.endswith("募"):
-        reply("🉑", event)
+        reply("🆑", event)
     elif txt.endswith("ちゃん！"):
         reply("はーい", event)
     elif txt.endswith("ちんげのきたろう"):
