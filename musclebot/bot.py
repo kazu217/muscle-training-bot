@@ -26,7 +26,9 @@ from linebot.models import (
 # ディレクトリ固定
 # --------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent   # = ~/musclebot
-os.chdir(BASE_DIR)                           # ★ これで相対パスは常に ~/musclebot
+
+ROOT_DIR = BASE_DIR.parent                           # レポジトリ直下
+os.chdir(ROOT_DIR)                                   # ★ ← ここをルートに
 
 
 # ★★★ ここからデバッグ用 ★★★
@@ -40,10 +42,11 @@ print("★ LOG_PATH:", (Path('log.json')).resolve(), file=sys.stderr)
 # --------------------------------------------------
 # ファイルパス
 # --------------------------------------------------
-#LOG_PATH        = Path("log.json")
-#MEMBERS_PATH    = Path("members.json")
-#DAILY_CSV_PATH  = Path("daily.csv")
-LOG_PATH = "log.json"
+
+LOG_PATH       = ROOT_DIR / "log.json"               # ルート直下
+MEMBERS_PATH   = BASE_DIR / "members.json"           # musclebot 内
+DAILY_CSV_PATH = BASE_DIR / "daily.csv"              # musclebot 内
+
 # --------------------------------------------------
 # 環境変数
 # --------------------------------------------------
