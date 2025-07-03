@@ -220,3 +220,12 @@ def index():
 # --------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
+
+@app.route("/files", methods=["GET"])
+def list_files():
+    files = {}
+    for root, dirs, filenames in os.walk("/opt/render/project/src"):
+        rel_root = os.path.relpath(root, "/opt/render/project/src")
+        files[rel_root] = filenames
+    return files
