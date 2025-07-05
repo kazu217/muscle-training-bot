@@ -1,61 +1,83 @@
-import os, json, csv, time, hashlib
+# ~/musclebot/bot.py
+# -*- coding: utf-8 -*-
+"""
+LINE Bot main server
+─────────────────────────────────────────────
+1. 画像/動画を受信 → 大学サーバー(record.py)へ POST
+2. 各種定型レスポンス / 忘れ回数集計
+3. /  → ヘルスチェック
+4. /files  → Render デバッグ用ファイル一覧
+"""
+
+import json, csv, os, sys, requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-
-import requests
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import LineBotApiError
 from linebot.models import (
     MessageEvent, ImageMessage, VideoMessage,
-    TextMessage, TextSendMessage
+    TextMessage, TextSendMessage,
 )
 
-# ───────────────────────────────────────────────
-# パス固定
-# ───────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent          # /opt/render/project/src/musclebot
-ROOT_DIR = BASE_DIR                                 # ここにファイルを置く
-os.chdir(ROOT_DIR)
+# ──────────────────────────────────────────────
+# ① 物理パスを固定（どこで実行しても ~/musclebot）
+# ──────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent          # ~/musclebot
+os.chdir(BASE_DIR)                                  # 以降の相対パスはここ基準
 
-# ───────────────────────────────────────────────
-# 主要ファイル
-# ───────────────────────────────────────────────
-LOG_PATH       = ROOT_DIR / "log.json"
-MEMBERS_PATH   = ROOT_DIR / "members.json"
-DAILY_CSV_PATH = ROOT_DIR / "daily.csv"
+# 主ファイル
+LOG_PATH        = BASE_DIR / "log.json"
+MEMBERS_PATH    = BASE_DIR / "members.json"
+DAILY_CSV_PATH  = BASE_DIR / "daily.csv"
+NGROK_FILE      = BASE_DIR / "current_ngrok_url.txt"  # ← watch_ngrok.sh が更新
 
-# ───────────────────────────────────────────────
-# .env
-# ───────────────────────────────────────────────
+# log.json が無ければ空 dict で作成
+if not LOG_PATH.exists():
+    LOG_PATH.write_text("{}", encoding="utf-8")
+
+# ──────────────────────────────────────────────
+# ② .env 読み込み
+# ──────────────────────────────────────────────
 load_dotenv()
 LINE_TOKEN      = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_SECRET     = os.getenv("LINE_CHANNEL_SECRET")
-LINE_GROUP_ID   = "C1d9ed412f2141da57e47bd28cec532a4"
-UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
+LINE_GROUP_ID   = "C1d9ed412f2141da57e47bd28cec532a4"  # ←自身のグループ ID
 
-# ───────────────────────────────────────────────
-# Flask + LINE 初期化
-# ───────────────────────────────────────────────
+# ngrok URL は毎回ファイルから読む（無ければ .env のまま）
+UNIV_SERVER_ENDPOINT = os.getenv("UNIV_SERVER_ENDPOINT", "")
+if NGROK_FILE.exists():
+    UNIV_SERVER_ENDPOINT = NGROK_FILE.read_text().strip() + "/record"
+
+# ──────────────────────────────────────────────
+# ③ Flask & LINE 初期化
+# ──────────────────────────────────────────────
 app     = Flask(__name__)
 bot     = LineBotApi(LINE_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 JST     = timezone(timedelta(hours=9))
 
-# log.json を準備
-if not LOG_PATH.exists():
-    LOG_PATH.write_text("{}", encoding="utf-8")
+# ──────────────────────────────────────────────
+# ④ 共通ヘルパ
+# ──────────────────────────────────────────────
+def log(*msg, **kw):
+    print(*msg, **kw, file=sys.stderr, flush=True)
 
-# ───────────────────────────────────────────────
-# ★ Webhook 呼び出し確認
-# ───────────────────────────────────────────────
+def safe_reply(text: str, event):
+    try:
+        bot.reply_message(event.reply_token, TextSendMessage(text=text))
+    except LineBotApiError:
+        pass  # 古い reply_token など
+
+# ──────────────────────────────────────────────
+# ⑤ Webhook 入口
+# ──────────────────────────────────────────────
 @app.before_request
-def debug_before_request():
+def _debug_hit():
     if request.path == "/callback":
-        print("🔔 /callback hit!")
+        log("🔔 /callback hit")
 
-# ───────────────────────────────────────────────
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -63,114 +85,101 @@ def callback():
     try:
         handler.handle(body, signature)
     except Exception as e:
-        print("❌ Webhook handling error:", e)
+        log("❌ Webhook handling error:", e)
         abort(400)
     return "OK"
 
-# ───────────────────────────────────────────────
-# 画像 / 動画
-# ───────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# ⑥ 画像 / 動画 メッセージ
+# ──────────────────────────────────────────────
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
-    # 指定グループのみ
+    # グループ / LINE 内メディアか確認
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
         return
     if event.message.content_provider.type != "line":
         return
 
-    user_id = event.source.user_id
-    now     = datetime.now(JST)
-    today   = now.strftime("%Y-%m-%d")
-    now_iso = now.isoformat()
-    print(f"📸 {user_id=} {today=} {now.time()}")
+    now   = datetime.now(JST)
+    today = now.strftime("%Y-%m-%d")
+    uid   = event.source.user_id
+    log(f"📸 {uid=} {today=} {now.time()}")
 
     # 名前解決
-    name = user_id
+    name = uid
     if MEMBERS_PATH.exists():
         try:
-            id_to_name = json.loads(MEMBERS_PATH.read_text(encoding="utf-8"))
-            name = id_to_name.get(user_id, user_id)
+            name = json.loads(MEMBERS_PATH.read_text()).get(uid, uid)
         except Exception as e:
-            print("⚠️ members.json 読み込み失敗:", e)
+            log("⚠️ members.json 読み込み失敗:", e)
 
-    # log.json 読み込み
-    logs = json.loads(LOG_PATH.read_text(encoding="utf-8"))
+    # log.json へ追記（重複 1 日 1 回）
+    logs = json.loads(LOG_PATH.read_text())
     logs.setdefault(name, [])
-
-    # 既に本日記録済み？
-    if any(str(entry).startswith(today) for entry in logs[name]):
+    if any(str(x).startswith(today) for x in logs[name]):
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
-
-    # 追記
-    logs[name].append(now_iso)
+    logs[name].append(now.isoformat())
     LOG_PATH.write_text(json.dumps(logs, ensure_ascii=False, indent=2))
-    print("✅ log.json 追記 OK")
+    log("✅ log.json 追記 OK")
 
-    # 大学サーバーへ
+    # 大学サーバーへ POST
     try:
         res = requests.post(
-            UNIV_SERVER_ENDPOINT,
-            json={"user_id": user_id, "date": today},
-            timeout=5
+            UNIV_SERVER_ENDPOINT, json={"user_id": uid, "date": today}, timeout=5
         )
-        print("📡 record.py status:", res.status_code, res.text[:120])
+        log("📡 record.py status:", res.status_code, res.text[:120])
     except requests.exceptions.RequestException as e:
-        print("❌ 大学サーバー送信失敗:", e)
+        log("❌ 大学サーバー送信失敗:", e)
 
     safe_reply("受け取りました！", event)
 
-# ───────────────────────────────────────────────
-# テキスト
-# ───────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# ⑦ テキスト メッセージ
+# ──────────────────────────────────────────────
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     txt = event.message.text.strip()
     if txt == "何が好き？":
-        reply("チョコミントよりもあ・な・た", event)
+        safe_reply("チョコミントよりもあ・な・た", event)
     elif txt.endswith("募"):
-        reply("🆑", event)
+        safe_reply("🆑", event)
     elif txt.endswith("ちゃん！"):
-        reply("はーい", event)
+        safe_reply("はーい", event)
     elif txt.endswith("ちんげのきたろう"):
-        reply("受け取りました：ちんげのきたろう", event)
+        safe_reply("受け取りました：ちんげのきたろう", event)
     elif txt.endswith("ダディダディ"):
-        reply(f"どすこいわっしょいピーポーピーポ―{txt}～", event)
+        safe_reply(f"どすこいわっしょいピーポーピーポ―{txt}～", event)
     elif txt.endswith("途中経過"):
-        name = txt.replace("途中経過", "").strip()
-        send_progress(name, event)
+        send_progress(txt.replace("途中経過", "").strip(), event)
 
-# ───────────────────────────────────────────────
+# ──────────────────────────────────────────────
 def send_progress(name: str, event):
     if not (MEMBERS_PATH.exists() and DAILY_CSV_PATH.exists()):
-        reply("データがありません。", event); return
-    names = list(json.loads(MEMBERS_PATH.read_text(encoding="utf-8")).values())
+        safe_reply("データがありません。", event)
+        return
+
+    names = list(json.loads(MEMBERS_PATH.read_text()).values())
     if name not in names:
-        reply("その名前は登録されていません。", event); return
-    idx = names.index(name)
-    rows = list(csv.reader(open(DAILY_CSV_PATH, newline='', encoding="utf-8")))
+        safe_reply("その名前は登録されていません。", event)
+        return
+
+    idx   = names.index(name)
+    rows  = csv.reader(DAILY_CSV_PATH.open(encoding="utf-8"))
     missed = sum(1 for r in rows if len(r) > idx and r[idx] == "1")
-    reply(f"{name}は今月{missed}回忘れてます", event)
+    safe_reply(f"{name}は今月{missed}回忘れてます", event)
 
-# ───────────────────────────────────────────────
-def reply(msg: str, event):
-    bot.reply_message(event.reply_token, TextSendMessage(text=msg))
-
-def safe_reply(msg: str, event):
-    try:
-        bot.reply_message(event.reply_token, TextSendMessage(text=msg))
-    except LineBotApiError:
-        pass
-
-# ───────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# ⑧ 補助ルート
+# ──────────────────────────────────────────────
 @app.route("/", methods=["GET"])
-def index():
+def index():          # Render ヘルスチェック
     return "LINE bot is alive"
 
-# Render 用：ファイル一覧確認
 @app.route("/files", methods=["GET"])
-def list_files():
-    return {"files": os.listdir(ROOT_DIR)}
+def list_files():     # Render デバッグ用
+    return {"files": os.listdir(BASE_DIR)}
 
-if __name__ == "__main__":
+# ──────────────────────────────────────────────
+if __name__ == "__main__":          # ローカルテスト用
     app.run(host="0.0.0.0", port=5000)
