@@ -1,60 +1,68 @@
 # -*- coding: utf-8 -*-
-"""LINE Bot main server (Render)
---------------------------------------------------
-機能:
-1. 画像/動画を受信すると大学サーバー(API)へ user_id と日付を POST（重複投稿なら duplicate_with も送る）
-2. 固定フレーズ応答
-3. 「<名前>途中経過」で今月の忘れ回数を返信
-4. `/` に "LINE bot is alive" を返す
+"""
+LINE Bot (Render)
+────────────────────────────────────────
+- 画像/動画を受信 → 大学サーバー /record へ POST
+- 固定フレーズ応答
+- "<名前>途中経過" で忘れ回数返答
 """
 
-import csv
-import json
-import os
-import hashlib
-from datetime import datetime
+from __future__ import annotations
+import os, json, csv
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import LineBotApiError
 from linebot.models import (
-    ImageMessage, VideoMessage, MessageEvent,
+    MessageEvent, ImageMessage, VideoMessage,
     TextMessage, TextSendMessage
 )
 
-# --------------------------------------------------
-# 環境変数・定数
-# --------------------------------------------------
+# ────────────────── パス固定
+BASE_DIR = Path(__file__).resolve().parent  # /opt/render/project/src/musclebot
+os.chdir(BASE_DIR)                          # 以降の相対パスは musclebot 内
+
+LOG_PATH       = Path("log.json")
+MEMBERS_PATH   = Path("members.json")
+DAILY_CSV_PATH = Path("daily.csv")
+
+# ────────────────── .env / Render env
 load_dotenv()
-LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-UNIV_SERVER_ENDPOINT = "https://e111-131-113-97-12.ngrok-free.app/record"
-HASH_LOG_PATH = "hash_log.json"
-LOG_PATH = "log.json"
-LINE_GROUP_ID = "C49b1b839c4344dcd379c1029b233c2a8"
+LINE_TOKEN      = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_SECRET     = os.getenv("LINE_CHANNEL_SECRET")
+LINE_GROUP_ID   = "C1d9ed412f2141da57e47bd28cec532a4"
 
-# --------------------------------------------------
-# 初期化
-# --------------------------------------------------
-app = Flask(__name__)
-line_bot_api = LineBotApi(LINE_TOKEN)
+# ngrok URL は Render の環境変数から取得
+NGROK_RECORD_URL = (os.getenv("NGROK_RECORD_URL") or "").rstrip("/")
+if NGROK_RECORD_URL:
+    ENDPOINT = f"{NGROK_RECORD_URL}/record"
+else:
+    print("⚠️ NGROK_RECORD_URL 未設定。大学サーバー通知はスキップします。")
+    ENDPOINT = None
+
+# ────────────────── Flask / LINE 初期化
+app     = Flask(__name__)
+bot     = LineBotApi(LINE_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
+JST     = timezone(timedelta(hours=9))
 
-if not os.path.exists(HASH_LOG_PATH):
-    with open(HASH_LOG_PATH, "w") as f:
-        json.dump({}, f)
-if not os.path.exists(LOG_PATH):
-    with open(LOG_PATH, "w") as f:
-        json.dump({}, f)
+if not LOG_PATH.exists():
+    LOG_PATH.write_text("{}", encoding="utf-8")
 
-# --------------------------------------------------
-# Webhook エンドポイント
-# --------------------------------------------------
+# ────────────────── Webhook
+@app.before_request
+def _debug():
+    if request.path == "/callback":
+        print("🔔 /callback hit")
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
-    body = request.get_data(as_text=True)
+    body      = request.get_data(as_text=True)
     try:
         handler.handle(body, signature)
     except Exception as e:
@@ -62,170 +70,93 @@ def callback():
         abort(400)
     return "OK"
 
-# --------------------------------------------------
-# 画像・動画メッセージ受信
-# --------------------------------------------------
+# ────────────────── 画像/動画
 @handler.add(MessageEvent, message=(ImageMessage, VideoMessage))
 def handle_media(event):
     if event.source.type != "group" or event.source.group_id != LINE_GROUP_ID:
-        print("👥 対象外のグループからのメディア → 無視")
         return
-
     if event.message.content_provider.type != "line":
-        print("❌ 外部メディアなので無視")
         return
 
-    user_id = event.source.user_id
-    today = datetime.now().strftime("%Y-%m-%d")
-    now_iso = datetime.now().isoformat()
-    print(f"📸 {today} に {user_id} が画像/動画を送信")
+    uid   = event.source.user_id
+    now   = datetime.now(JST)
+    today = now.strftime("%Y-%m-%d")
+    now_iso = now.isoformat()
+    print(f"📸 uid='{uid}' today='{today}' {now.time()}")
 
-    message_id = event.message.id
-    content = line_bot_api.get_message_content(message_id).content
-
-    if len(content) < 100:
-        print("⚠️ メディアが小さすぎるため無視")
-        return
-
-    content_hash = hashlib.sha256(content).hexdigest()
-
-    # ハッシュログ読み込み
-    with open(HASH_LOG_PATH, "r") as f:
-        hash_log = json.load(f)
-    user_hashes = hash_log.get(user_id, {})
-
-    # members.json を使って名前取得
-    with open("members.json", "r", encoding="utf-8") as f:
-        id_to_name = json.load(f)
-    name = id_to_name.get(user_id, user_id)
-
-    # log.json 読み込み
-    if os.path.exists(LOG_PATH):
-        with open(LOG_PATH, "r", encoding="utf-8") as f:
-            logs = json.load(f)
-    else:
-        logs = {}
-
-    if name not in logs:
-        logs[name] = []
-
-    # 重複判定と送信
-    if content_hash in user_hashes:
-        duplicated_date = user_hashes[content_hash]
-        print(f"⚠️ 重複画像/動画。{duplicated_date} の投稿と一致")
-
-        # log.json に追加（文字列として）
-        logs[name].append(f"重複: {duplicated_date}")
-        with open(LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(logs, f, ensure_ascii=False, indent=2)
-
+    # 名前解決
+    name = uid
+    if MEMBERS_PATH.exists():
         try:
-            requests.post(
-                UNIV_SERVER_ENDPOINT,
-                json={
-                    "user_id": user_id,
-                    "date": today,
-                    "duplicate": True,
-                    "duplicate_with": duplicated_date
-                }
-            )
+            name = json.loads(MEMBERS_PATH.read_text()).get(uid, uid)
         except Exception as e:
-            print("❌ 重複通知失敗", e)
+            print("⚠️ members.json 読込失敗:", e)
 
-        reply("⚠️ 重複投稿が検出されました！", event)
+    # log.json 更新
+    logs = json.loads(LOG_PATH.read_text())
+    logs.setdefault(name, [])
+    if any(str(e).startswith(today) for e in logs[name]):
+        safe_reply("すでに今日の投稿は受け取っています！", event)
         return
-
-    # 新規：hashログに追加
-    user_hashes[content_hash] = today
-    hash_log[user_id] = user_hashes
-    with open(HASH_LOG_PATH, "w") as f:
-        json.dump(hash_log, f, ensure_ascii=False, indent=2)
-
-    # log.json に追加（ISO形式で）
     logs[name].append(now_iso)
-    with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(logs, f, ensure_ascii=False, indent=2)
+    LOG_PATH.write_text(json.dumps(logs, ensure_ascii=False, indent=2))
+    print("✅ log.json 追記 OK")
 
-    try:
-        res = requests.post(UNIV_SERVER_ENDPOINT, json={"user_id": user_id, "date": today})
-        print("✅ 大学サーバーに送信成功", res.status_code)
-        reply("受け取りました！", event)
-    except Exception as e:
-        print("❌ 大学サーバーへの送信失敗", e)
-        reply("⚠️ エラー：記録に失敗しました。時間をおいてもう一度送信してください。", event)
+    # 大学サーバーへ
+    if ENDPOINT:
+        try:
+            res = requests.post(
+                ENDPOINT, json={"user_id": uid, "date": today}, timeout=5
+            )
+            print("📡 record.py status:", res.status_code, res.text[:120])
+        except requests.exceptions.RequestException as e:
+            print("❌ 大学サーバー送信失敗:", e)
+    else:
+        print("⚠️ endpoint 未設定 → 送信スキップ")
 
-# --------------------------------------------------
-# テキストメッセージ応答
-# --------------------------------------------------
+    safe_reply("受け取りました！", event)
+
+# ────────────────── テキスト
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
-    text = event.message.text.strip()
-
-    if text == "何が好き？":
+    txt = event.message.text.strip()
+    if txt == "何が好き？":
         reply("チョコミントよりもあ・な・た", event)
-        return
-    if text.endswith("募"):
+    elif txt.endswith("募"):
         reply("🆑", event)
-        return
-    if text.endswith("ちゃん！"):
+    elif txt.endswith("ちゃん！"):
         reply("はーい", event)
-        return
-    if text.endswith("ちんげのきたろう"):
+    elif txt.endswith("ちんげのきたろう"):
         reply("受け取りました：ちんげのきたろう", event)
-        return
-    if text.endswith("ダディダディ"):
-        reply(f"どすこいわっしょいピーポーピーポ―{text}～", event)
-        return
-    if text.endswith("途中経過"):
-        name = text.replace("途中経過", "").strip()
-        send_progress(name, event)
-        return
+    elif txt.endswith("ダディダディ"):
+        reply(f"どすこいわっしょいピーポーピーポ―{txt}～", event)
+    elif txt.endswith("途中経過"):
+        send_progress(txt.replace("途中経過", "").strip(), event)
 
-# --------------------------------------------------
-# 途中経過チェック
-# --------------------------------------------------
+# ────────────────── 途中経過
 def send_progress(name: str, event):
-    if not os.path.exists("members.json") or not os.path.exists("daily.csv"):
-        reply("データがありません。", event)
-        return
-
-    with open("members.json", "r", encoding="utf-8") as f:
-        id_to_name = json.load(f)
-
-    names = list(id_to_name.values())
+    if not (MEMBERS_PATH.exists() and DAILY_CSV_PATH.exists()):
+        reply("データがありません。", event); return
+    names = list(json.loads(MEMBERS_PATH.read_text()).values())
     if name not in names:
-        reply("その名前は登録されていません。", event)
-        return
-    index = names.index(name)
-
-    with open("daily.csv", "r", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
-    missed = sum(1 for row in rows if len(row) > index and row[index] == "1")
-
+        reply("その名前は登録されていません。", event); return
+    idx = names.index(name)
+    rows = csv.reader(open(DAILY_CSV_PATH, encoding="utf-8"))
+    missed = sum(1 for r in rows if len(r) > idx and r[idx] == "1")
     reply(f"{name}は今月{missed}回忘れてます", event)
 
-# --------------------------------------------------
-# 共通返信関数
-# --------------------------------------------------
-def reply(message: str, event):
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=message))
+# ────────────────── ヘルパ
+def reply(msg: str, event):       bot.reply_message(event.reply_token, TextSendMessage(text=msg))
+def safe_reply(msg: str, event):
+    try: bot.reply_message(event.reply_token, TextSendMessage(text=msg))
+    except LineBotApiError: pass
 
-# --------------------------------------------------
-# ヘルスチェックルート
-# --------------------------------------------------
 @app.route("/", methods=["GET"])
-def index():
-    return "LINE bot is alive"
+def index(): return "LINE bot is alive"
 
-# --------------------------------------------------
+# Render でファイル確認用
+@app.route("/files", methods=["GET"])
+def list_files(): return {"files": os.listdir(BASE_DIR)}
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
-
-@app.route("/files", methods=["GET"])
-def list_files():
-    files = {}
-    for root, dirs, filenames in os.walk("/opt/render/project/src"):
-        rel_root = os.path.relpath(root, "/opt/render/project/src")
-        files[rel_root] = filenames
-    return files
