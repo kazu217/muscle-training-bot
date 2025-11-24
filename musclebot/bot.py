@@ -98,7 +98,7 @@ def handle_media(event):
     if any(str(e).startswith(today) for e in logs[name]):
         safe_reply("すでに今日の投稿は受け取っています！", event)
         return
-    logs[name].append(now_iso)
+    logs[name].append({"date": today, "ts": now_iso})
     LOG_PATH.write_text(json.dumps(logs, ensure_ascii=False, indent=2))
     print("✅ log.json 追記 OK")
 
