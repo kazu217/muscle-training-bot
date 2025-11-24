@@ -1,0 +1,18 @@
+#10分おきに Render を叩いてスリープ防止
+*/10 * * * * tmux kill-session -t keepalive 2>/dev/null; tmux new-session -d -s >
+
+#毎日0:01に daily_check.py を実行（前日分を記録）
+1 0 * * * cd /home/kazu20040127/musclebot && /usr/bin/python3 daily_check.py >> >
+
+#毎月1日12:00に月報を送信（AUTO_MONTHLY=1 環境変数付き）
+0 12 1 * * cd /home/kazu20040127/musclebot && AUTO_MONTHLY=1 /usr/bin/python3 mo>
+
+#ngrok を 自動監視・切断時に再起動するシェルスクリプト
+*/5 * * * * /home/kazu20040127/musclebot/watch_ngrok.sh >> /home/kazu20040127/mu>
+
+#ポーカーアプリを常時起動 かつ クラッシュ時は最大10 分以内に自動再起動
+#*/10 * * * * /usr/bin/bash -c 'tmux has-session -t pokerapp 2>/dev/null || tmux>
+
+# ── poker_app keep‑alive every 10 minutes ───────────────
+*/10 * * * * tmux kill-session -t keepalive_poker 2>/dev/null; tmux new-session >
+
