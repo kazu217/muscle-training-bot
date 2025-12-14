@@ -95,10 +95,16 @@ def handle_media(event):
     # log.json 更新
     logs = json.loads(LOG_PATH.read_text())
     logs.setdefault(name, [])
-    if any(str(e).startswith(today) for e in logs[name]):
+#    if any(str(e).startswith(today) for e in logs[name]):
+#       safe_reply("すでに今日の投稿は受け取っています！", event)
+#       return
+    if any(entry.get("date") == today for entry in logs[name] if isinstance(entry, dict)):
         safe_reply("すでに今日の投稿は受け取っています！", event)
-        return
-    logs[name].append(now_iso)
+        return 
+   logs[name].append({
+        "date": today,
+        "ts": now_iso
+    })
     LOG_PATH.write_text(json.dumps(logs, ensure_ascii=False, indent=2))
     print("✅ log.json 追記 OK")
 
@@ -123,7 +129,7 @@ def handle_text(event):
     if txt == "何が好き？":
         reply("チョコミントよりもあ・な・た", event)
     elif txt.endswith("募"):
-        reply("🆑", event)
+        reply("🉑", event)
     elif txt.endswith("ちゃん！"):
         reply("はーい", event)
     elif txt.endswith("ちんげのきたろう"):
